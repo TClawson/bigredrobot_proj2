@@ -8,15 +8,26 @@ import geometry_msgs.msg
 
 #NOTE: Pass in all transforms relative to origin O_0
 
-def get_transforms(limb):
-    listener = tf.TransformListener()
-    frames = limb.joint_names
+frame_dict = {  "left_s0": "left_upper_shoulder",
+                "left_s1": "left_lower_shoulder",
+                "left_e0": "left_upper_elbow",
+                "left_e1": "left_lower_elbow",
+                "left_w0": "left_upper_forearm",
+                "left_w1": "left_lower_forearm",
+                "left_w2": "left_wrist"}
+
+
+def get_transforms(listener, limb):
+    joints = limb.joint_names()
     transforms = []
-    for frame in frames:
+    for joint in joints:
+        #magic!
+        frame = frame_dict[joint]
         try:
-            (trans,rot) = listener.lookupTransform(frame, 'base', rospy.Time()) 
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            rospy.logwarn('Bad things have happened re: joint frame transforms')
+            (trans,rot) = listener.lookupTransform(frame, 'base', rospy.Time(0)) 
+        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+            rospy.logwarn(e)
+            rospy.logwarn('Bad things have happened re: joint frame transforms. Frame: %s' %(frame))
         transforms.append((trans,rot))
     return transforms
    
@@ -27,9 +38,9 @@ def jacobian(transforms):
     Returns Jacobian from an input list of (trans, rot) for each frame
     '''   
     # Utility functions
-    ros_to_np_q = lambda q: np.array([q.x, q.y, q.z, q.w])
+    ros_to_np_q = lambda q: np.array(q)
     q_mult = tf.transformations.quaternion_multiply
-    q_conj = tf.transformations.quaterion_conjugate
+    q_conj = tf.transformations.quaternion_conjugate
         
     # Convert ROS quaternions to 4-element numpy arrays
     np_quaternions = [ros_to_np_q(q) for (_, q) in transforms] 
@@ -41,12 +52,10 @@ def jacobian(transforms):
         z_quaternion = q_mult(q_mult(q, z_base), q_conj(q)) #p' = qpq^-1
         z_vectors.append(z_quaternion[0:3])
 
-    J = numpy.empty(6,(len(transforms)))
-    for j, (frame_origin, _) in enumerate(transforms):
-         for i in range(3):
-            J[i,j] = np.cross(z_vectors[i], frame_origin) # z_i * (O_n - O_i)
-         for i in range(3,6):
-            J[i,j] = z_vectors[i] # z_i
+    J = np.empty((6, len(transforms)))
+    for i, (frame_origin, _) in enumerate(transforms):
+        J[0:3,i] = np.cross(z_vectors[i], frame_origin) # z_i * (O_n - O_i)
+        J[3:6,i] = z_vectors[i] # z_i
     
     return J
 
@@ -59,13 +68,13 @@ def rpinv(J):
     '''
     Right pseudo inverse
     '''
-    return J.T * np.linalg.inv(J * J.T)
+    return np.dot(J.T, np.linalg.inv(np.dot(J, J.T)))
 
 def lpinv(J):
     '''
     Left pseudo inverse
     '''
-    return np.linalg.inv(J.T * J) * J.T
+    return np.dot(np.linalg.inv(np.dot(J.T, J)), J.T)
 
 def find_joint_vels(J,ee_vels,b):
     '''
