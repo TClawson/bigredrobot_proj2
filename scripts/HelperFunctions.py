@@ -18,6 +18,8 @@ frame_dict = {  "left_s0": "left_upper_shoulder",
                 "left_w1": "left_lower_forearm",
                 "left_w2": "left_wrist"}
 
+PLANE_FILE = '/scripts/plane.txt'
+
 def get_limits():
     rospack = rospkg.RosPack()
     path = rospack.get_path("baxter_description")
@@ -121,5 +123,40 @@ def project_point(point, normal, q):
     '''
     return q - np.dot(q.A1 - point.A1, normal.A1) * normal
 
+def save_plane(point, normal):
+    '''
+    Saves plane points to file
+    '''
+    rospack = rospkg.RosPack()
+    path = rospack.get_path("bigredrobot_proj2")
+    f = open(path+PLANE_FILE, 'w')
+    f.write(str(point.item(0)) + ":" + str(point.item(1)) + ":" + str(point.item(2)) + '\n')
+    f.write(str(normal.item(0)) + ":" + str(normal.item(1)) + ":" + str(normal.item(2)) + '\n')
+    f.close()
+
+def load_plane():
+    '''
+    Reads points from plane file and returns the plane
+    '''
+    rospack = rospkg.RosPack()
+    path = rospack.get_path("bigredrobot_proj2")
+    f = open(path+PLANE_FILE, 'r')
+
+    #first line is point
+    line = f.readline()
+    coords = [x.strip() for x in line.split(':')]
+    point = np.matrix([float(coords[0]),float(coords[1]),float(coords[2])]).T
+
+
+    #second line is norm
+    line = f.readline()
+    coords = [x.strip() for x in line.split(':')]
+    norm = np.matrix([float(coords[0]),float(coords[1]),float(coords[2])]).T
+
+    f.close()
+
+    return point, norm
+    
+
 if __name__ == '__main__':
-    get_limits()
+    load_plane()

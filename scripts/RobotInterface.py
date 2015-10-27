@@ -2,6 +2,7 @@
 
 import math
 import rospy
+import rospkg
 import tf
 import numpy as np
 import HelperFunctions as hf
@@ -20,6 +21,8 @@ class LineFollower(object):
 
     DIST_THRESH = 0.01
     MOVE_SPEED = 0.2
+    SAVE_PLANE = True
+    LOAD_PLANE = not SAVE_PLANE
 
     def __init__(self):
         rospy.loginfo("Initializing LineFollower")
@@ -132,15 +135,23 @@ def main():
     rospy.init_node("velocity_follower")
     line_follower = LineFollower()
     rospy.on_shutdown(line_follower.clean_shutdown)
-    
+
     #Define plane
-    raw_input("Define the first point on the plane")
-    plane1 = line_follower.get_gripper_coords()
-    raw_input("Define the second point on the plane")
-    plane2 = line_follower.get_gripper_coords()
-    raw_input("Define the third point on the plane")
-    plane3 = line_follower.get_gripper_coords()
-    point, normal = hf.get_plane(plane1, plane2, plane3)
+    if line_follower.LOAD_PLANE:
+        rospy.loginfo("Loading plane from file..")
+        point, normal = hf.load_plane()
+    else:
+        raw_input("Define the first point on the plane")
+        plane1 = line_follower.get_gripper_coords()
+        raw_input("Define the second point on the plane")
+        plane2 = line_follower.get_gripper_coords()
+        raw_input("Define the third point on the plane")
+        plane3 = line_follower.get_gripper_coords()
+        point, normal = hf.get_plane(plane1, plane2, plane3)
+
+    if line_follower.SAVE_PLANE:
+        hf.save_plane(point, normal)
+        
 
     #Wait for command
     while not rospy.is_shutdown():
