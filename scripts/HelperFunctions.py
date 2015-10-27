@@ -4,6 +4,8 @@ import numpy as np
 import tf
 import rospy
 import geometry_msgs.msg
+import rospkg
+import xml.etree.ElementTree as ET
 
 
 #NOTE: Pass in all transforms relative to origin O_0
@@ -16,6 +18,24 @@ frame_dict = {  "left_s0": "left_upper_shoulder",
                 "left_w1": "left_lower_forearm",
                 "left_w2": "left_wrist"}
 
+def get_limits():
+    rospack = rospkg.RosPack()
+    path = rospack.get_path("baxter_description")
+    tree = ET.parse(path + "/urdf/baxter.urdf")
+    print tree
+    root = tree.getroot()
+    print root
+
+    lower = []
+    upper = []
+
+    for joint_name in frame_dict.keys():
+        joint_element = root.find(".//joint[@name='%s']" %(joint_name))
+        limit_element = joint_element.find('limit')        
+        lower.append(limit_element.get('lower'))
+        upper.append(limit_element.get('upper'))
+    
+    return lower, upper
 
 def get_transforms(listener, limb):
     joints = limb.joint_names()
@@ -101,3 +121,5 @@ def project_point(point, normal, q):
     '''
     return q - np.dot(q.A1 - point.A1, normal.A1) * normal
 
+if __name__ == '__main__':
+    get_limits()
