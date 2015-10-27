@@ -85,5 +85,19 @@ def find_joint_vels(J,ee_vels,b):
     I = np.identity(max(A.shape))
     return lpinv(J) * ee_vels + (I - A)*b
 
+def get_plane(p1, p2, p3):
+    '''
+    Returns a unit vector normal to the 3 input points    
+    '''
+    r12 = p2 - p1
+    r32 = p2 - p3
+    normal = np.matrix(np.cross(r12.A1, r32.A1)).T
+    normal = normal/np.linalg.norm(normal)
+    return p1, normal
 
-    
+def project_point(point, normal, q):
+    '''
+    Projects q into the plane defined by normal, point
+    '''
+    return q - np.dot(q.A1 - point.A1, normal.A1) * normal
+

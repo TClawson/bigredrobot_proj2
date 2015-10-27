@@ -5,6 +5,7 @@ import rospy
 import tf
 import numpy as np
 import HelperFunctions as hf
+from baxter_pykdl import baxter_kinematics
 
 from std_msgs.msg import (
     UInt16,
@@ -17,7 +18,8 @@ from baxter_interface import CHECK_VERSION
 
 class LineFollower(object):
 
-    DIST_THRESH = 0.1
+    DIST_THRESH = 0.01
+    MOVE_SPEED = 0.2
 
     def __init__(self):
         rospy.loginfo("Initializing LineFollower")
@@ -25,9 +27,10 @@ class LineFollower(object):
                                          UInt16, queue_size=10)
         self._left_arm = baxter_interface.limb.Limb("left")
         self._left_joint_names = self._left_arm.joint_names()
+        self._left_kin = baxter_kinematics('left')
         self._listener =  tf.TransformListener()
         rospy.sleep(2)
-        self._listener.waitForTransform('base', 'base', rospy.Time(), rospy.Duration(4)) # wait for transforms to publish       
+        self._listener.waitForTransform('base', 'base', rospy.Time(), rospy.Duration(4)) # wait for transforms to publish      
 
         # control parameters
         self.pub_rate = 500.0  # Hz
@@ -60,7 +63,7 @@ class LineFollower(object):
 
     def get_gripper_coords(self):
         pos = self._left_arm.endpoint_pose().popitem()[1]
-        return np.array([pos.x, pos.y, pos.z])
+        return np.matrix([pos.x, pos.y, pos.z]).T
 
     def clean_shutdown(self):
         rospy.loginfo("\nCrashing stuff...")
@@ -76,21 +79,14 @@ class LineFollower(object):
         rate = rospy.Rate(self.pub_rate)
 
         p12 = p2 - p1
-        
+        max_dist = np.linalg.norm(p12)
         v12 = p12/np.linalg.norm(p12)*v0
-        arm = 0
-        squiggle = np.array([v12[0], v12[1], v12[2], 0, 0, 0])
-        squiggle.shape = (6,1) # force to be col vector
-        rospy.loginfo("Moving. Press Ctrl-C to stop...")
-        while (self.dist_from_point(p2) > self.DIST_THRESH) and not rospy.is_shutdown():
-            self.rate_publisher.publish(self.pub_rate)
-            transforms = hf.get_transforms(self._listener, self._left_arm)
-            j = hf.jacobian(transforms)
-            q_dot = np.dot(hf.lpinv(j), squiggle)
-            rospy.loginfo(q_dot)
-            cmd = {joint: q_dot[i] for i, joint in enumerate(self._left_joint_names)}
-            self._left_arm.set_joint_velocities(cmd)
+        squiggle = np.matrix([v12[0], v12[1], v12[2], 0, 0, 0]).T
 
+        rospy.loginfo("Moving. Press Ctrl-C to stop...")
+        while (self.dist_from_point(p1) < max_dist) and not rospy.is_shutdown():
+            self.rate_publisher.publish(self.pub_rate)
+            self.command_velocity(squiggle)
             rate.sleep()
 
     def follow_line_p_control(self, p1, p2, v0, kp):
@@ -98,45 +94,69 @@ class LineFollower(object):
         t0 = rospy.Time.now()
 
         p12 = p2 - p1
-        v12 = p12/np.linalg.norm(r12)*v0
-        arm = 0
-        while (self.dist_from_point(p2) > self.DIST_THRESH) and not rospy.is_shutdown():
+        max_dist = np.linalg.norm(p12)
+        v12 = p12/np.linalg.norm(p12)*v0
+
+        rospy.loginfo("Moving. Press Ctrl-C to stop...")
+        while (self.dist_from_point(p1) < max_dist) and not rospy.is_shutdown():
             self.rate_publisher.publish(self.pub_rate)
-            t = rospy.Time.now() - t0
+            t = (rospy.Time.now() - t0).to_sec()
             p_estimate = p1 + t*v12
             p_actual = self.get_gripper_coords()
-            error = p_actual - p_estimate
+            error = p_estimate - p_actual
             v_correct = kp*error
             v_command = v12 + v_correct
-            squiggle = concatenate(v_command.T, np.array[0,0,0])
-            squiggle.shape = (6,1) # force to be col vector
-            rospy.loginfo("Moving. Press Ctrl-C to stop...")
-            hf.get_transforms(self._listener, self._left_arm)
-            j = hf.jacobian(transforms)
-            q_dot = hf.lpinv(j)*squiggle
-            cmd = {[(joint, q_dot[i]) for i, joint in enumerate(self._left_joint_names)]}
-            self._left_arm.set_joint_velocities(cmd)
+            squiggle = np.concatenate((v_command, np.matrix([0,0,0]).T))
+            self.command_velocity(squiggle)
 
             rate.sleep()        
+
+    def command_velocity(self, squiggle):
+        J = self._left_kin.jacobian()
+        q_dot = hf.rpinv(J)*squiggle
+        cmd = {joint: q_dot[i, 0] for i, joint in enumerate(self._left_joint_names)}
+        self._left_arm.set_joint_velocities(cmd)
 
     def dist_from_point(self, p):
         '''
         Gets the distance of the gripper from some point p.
-        'p' is a numpy array
+        'p' is a numpy column vector
         '''
         gripper = self.get_gripper_coords()
-        r = np.array(gripper) - p
-        return np.sqrt(r[0]**2 + r[1]**2 + r[2]**2)
+        r = gripper - p
+        return np.linalg.norm(r)
 
 def main():
 
     rospy.loginfo("Initializing node... ")
-    rospy.init_node("black_sheep_wobbler")
+    rospy.init_node("velocity_follower")
     line_follower = LineFollower()
     rospy.on_shutdown(line_follower.clean_shutdown)
-    p1 = line_follower.get_gripper_coords();
-    p2 = p1 + np.array([0.2,0,0])     #Meters? Probably...
-    line_follower.follow_line(p1, p2, 0.02)  #Almost certainly possibly meters/second
+    
+    #Define plane
+    raw_input("Define the first point on the plane")
+    plane1 = line_follower.get_gripper_coords()
+    raw_input("Define the second point on the plane")
+    plane2 = line_follower.get_gripper_coords()
+    raw_input("Define the third point on the plane")
+    plane3 = line_follower.get_gripper_coords()
+    point, normal = hf.get_plane(plane1, plane2, plane3)
+
+    #Wait for command
+    while not rospy.is_shutdown():
+        raw_input("Press enter to set goal")
+        p2 = line_follower.get_gripper_coords()
+        rospy.loginfo(p2)
+        raw_input("Press enter to set start")
+        p1 = line_follower.get_gripper_coords()
+        rospy.loginfo(p1)
+        rospy.loginfo('Following...')
+       
+        p1 = hf.project_point(point, normal, p1)
+        p2 = hf.project_point(point, normal, p2)
+
+#        line_follower.follow_line(p1, p2, line_follower.MOVE_SPEED)     #Almost certainly possibly meters/second
+        line_follower.follow_line_p_control(p1, p2, line_follower.MOVE_SPEED, 0.7)     #Almost certainly possibly meters/second
 
     rospy.loginfo("Done.")
 
