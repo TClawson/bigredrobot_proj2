@@ -24,20 +24,27 @@ def get_limits():
     rospack = rospkg.RosPack()
     path = rospack.get_path("baxter_description")
     tree = ET.parse(path + "/urdf/baxter.urdf")
-    print tree
     root = tree.getroot()
-    print root
 
-    lower = []
-    upper = []
+    joint_limits = {}
 
     for joint_name in frame_dict.keys():
         joint_element = root.find(".//joint[@name='%s']" %(joint_name))
         limit_element = joint_element.find('limit')        
-        lower.append(limit_element.get('lower'))
-        upper.append(limit_element.get('upper'))
+        joint_limits[joint_name] = float(limit_element.get('lower')),float(limit_element.get('upper'))
     
-    return lower, upper
+    return joint_limits
+
+def get_joint_info(joint_angles, joint_limits):
+    '''
+    Return the current position and lower, upper limits of each joint
+    '''
+    joint_info = {}
+    for joint_name in frame_dict.keys():
+        joint_info[joint_name] = joint_angles[joint_name], joint_limits[joint_name][0], joint_limits[joint_name][1]
+
+    return joint_info
+    
 
 def get_transforms(listener, limb):
     joints = limb.joint_names()

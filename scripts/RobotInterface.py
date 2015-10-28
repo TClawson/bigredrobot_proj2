@@ -21,7 +21,7 @@ class LineFollower(object):
 
     DIST_THRESH = 0.01
     MOVE_SPEED = 0.2
-    SAVE_PLANE = True
+    SAVE_PLANE = False
     LOAD_PLANE = not SAVE_PLANE
 
     def __init__(self):
@@ -43,6 +43,8 @@ class LineFollower(object):
         self._init_state = self.interface.state().enabled
         rospy.loginfo("Enabling robot... ")
         self.interface.enable()
+        
+        self.joint_limits = hf.get_limits()
 
         # set joint state publishing to 500Hz
         self.rate_publisher.publish(self.pub_rate)
@@ -116,7 +118,8 @@ class LineFollower(object):
 
     def command_velocity(self, squiggle):
         J = self._left_kin.jacobian()
-        q_dot = hf.rpinv(J)*squiggle
+        Jinv = hf.rpinv(J)
+        q_dot = Jinv*squiggle# + (np.identity(7) - (Jinv*J))*self.get_b(0, 0.1) Adding this breaks the code....
         cmd = {joint: q_dot[i, 0] for i, joint in enumerate(self._left_joint_names)}
         self._left_arm.set_joint_velocities(cmd)
 
@@ -129,6 +132,44 @@ class LineFollower(object):
         r = gripper - p
         return np.linalg.norm(r)
 
+    def get_w(self, joint_angles):
+        joint_infos = hf.get_joint_info(self._left_arm.joint_angles(), self.joint_limits).values()
+        n = len(joint_infos)
+        w = 0
+        for i, joint_angle in enumerate(joint_angles):
+            q_bar = (joint_infos[i][1] + joint_infos[i][2])/2
+            w = w - 1/(2*n)*((joint_angle - q_bar)/(joint_infos[i][2] - joint_infos[i][1]))**2
+        return w
+
+    def get_partial_w_q(self, joint_angles, delta):
+        n = len(joint_angles)
+        partial = []
+        for i, joint_angle in enumerate(joint_angles):
+            fq = self.get_w(joint_angles)
+            deltas = np.zeros((n,1))
+            deltas[i] = delta
+            fqdelta = self.get_w(joint_angles + deltas)
+            partial.append( (fqdelta - fq) / delta)
+        return np.matrix(partial)
+
+    def get_b(self, k, delta):
+        '''
+        Secondary objective function
+        '''
+        joint_angles = self._left_arm.joint_angles().values()
+        return k * self.get_partial_w_q(joint_angles,delta)
+
+        '''
+        dw = []
+
+        n = len(joint_infos)
+        for joint_info in joint_infos:
+            q_bar = (joint_info[1] + joint_info[2])/2
+            
+            dw.append(-1/(2n)*((joint_info[0] + delta - q_bar)/(joint_info[2] - joint_info[1]))**2)
+
+        return k*np.matrix(w).T
+    '''
 def main():
 
     rospy.loginfo("Initializing node... ")
