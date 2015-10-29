@@ -19,6 +19,7 @@ frame_dict = {  "left_s0": "left_upper_shoulder",
                 "left_w2": "left_wrist"}
 
 PLANE_FILE = '/scripts/plane.txt'
+GOAL_FILE = '/scripts/goal.txt'
 
 def get_limits():
     rospack = rospkg.RosPack()
@@ -26,14 +27,16 @@ def get_limits():
     tree = ET.parse(path + "/urdf/baxter.urdf")
     root = tree.getroot()
 
-    joint_limits = {}
+    lower_limits = {}
+    upper_limits = {}
 
     for joint_name in frame_dict.keys():
         joint_element = root.find(".//joint[@name='%s']" %(joint_name))
         limit_element = joint_element.find('limit')        
-        joint_limits[joint_name] = float(limit_element.get('lower')),float(limit_element.get('upper'))
+        lower_limits[joint_name] = float(limit_element.get('lower'))
+        upper_limits[joint_name] = float(limit_element.get('upper'))
     
-    return joint_limits
+    return lower_limits, upper_limits
 
 def get_joint_info(joint_angles, joint_limits):
     '''
@@ -141,6 +144,18 @@ def save_plane(point, normal):
     f.write(str(normal.item(0)) + ":" + str(normal.item(1)) + ":" + str(normal.item(2)) + '\n')
     f.close()
 
+def save_goal(start, goal):
+    '''
+    Saves plane points to file
+    '''
+    rospack = rospkg.RosPack()
+    path = rospack.get_path("bigredrobot_proj2")
+    f = open(path+GOAL_FILE, 'w')
+    f.write(str(start.item(0)) + ":" + str(start.item(1)) + ":" + str(start.item(2)) + '\n')
+    f.write(str(goal.item(0)) + ":" + str(goal.item(1)) + ":" + str(goal.item(2)) + '\n')
+    f.close()
+
+
 def load_plane():
     '''
     Reads points from plane file and returns the plane
@@ -163,6 +178,29 @@ def load_plane():
     f.close()
 
     return point, norm
+
+def load_goal():
+    '''
+    Reads points from plane file and returns the plane
+    '''
+    rospack = rospkg.RosPack()
+    path = rospack.get_path("bigredrobot_proj2")
+    f = open(path+GOAL_FILE, 'r')
+
+    #first line is point
+    line = f.readline()
+    coords = [x.strip() for x in line.split(':')]
+    start = np.matrix([float(coords[0]),float(coords[1]),float(coords[2])]).T
+
+
+    #second line is norm
+    line = f.readline()
+    coords = [x.strip() for x in line.split(':')]
+    goal = np.matrix([float(coords[0]),float(coords[1]),float(coords[2])]).T
+
+    f.close()
+
+    return start, goal
     
 
 if __name__ == '__main__':

@@ -23,6 +23,11 @@ class LineFollower(object):
     MOVE_SPEED = 0.2
     SAVE_PLANE = False
     LOAD_PLANE = not SAVE_PLANE
+    SAVE_GOAL = True
+    LOAD_GOAL = not SAVE_GOAL
+#    K0 = 100
+    K0 = 0
+    DELTA = 0.01
 
     def __init__(self):
         rospy.loginfo("Initializing LineFollower")
@@ -44,7 +49,7 @@ class LineFollower(object):
         rospy.loginfo("Enabling robot... ")
         self.interface.enable()
         
-        self.joint_limits = hf.get_limits()
+        self.lower_limits, self.upper_limits = hf.get_limits()
 
         # set joint state publishing to 500Hz
         self.rate_publisher.publish(self.pub_rate)
@@ -119,7 +124,9 @@ class LineFollower(object):
     def command_velocity(self, squiggle):
         J = self._left_kin.jacobian()
         Jinv = hf.rpinv(J)
-        q_dot = Jinv*squiggle# + (np.identity(7) - (Jinv*J))*self.get_b(0, 0.1) Adding this breaks the code....
+        print "I - J+J:", (np.identity(7) - (Jinv*J))
+        print "b:", self.get_b(self.K0, self.DELTA)
+        q_dot = Jinv*squiggle + (np.identity(7) - (Jinv*J))*self.get_b(self.K0, self.DELTA) 
         cmd = {joint: q_dot[i, 0] for i, joint in enumerate(self._left_joint_names)}
         self._left_arm.set_joint_velocities(cmd)
 
@@ -132,31 +139,36 @@ class LineFollower(object):
         r = gripper - p
         return np.linalg.norm(r)
 
-    def get_w(self, joint_angles):
-        joint_infos = hf.get_joint_info(self._left_arm.joint_angles(), self.joint_limits).values()
-        n = len(joint_infos)
+    def get_w(self, joint_angles, lower_limits, upper_limits):
+        '''
+        upper_limits and lower_limits are dicts, so is joint_angles
+        '''
+        n = len(hf.frame_dict)
         w = 0
-        for i, joint_angle in enumerate(joint_angles):
-            q_bar = (joint_infos[i][1] + joint_infos[i][2])/2
-            w = w - 1/(2*n)*((joint_angle - q_bar)/(joint_infos[i][2] - joint_infos[i][1]))**2
+        for joint in hf.frame_dict:
+            q_bar = (lower_limits[joint] + upper_limits[joint])/2
+            w = w - 1.0/(2.0*n)*((joint_angles[joint] - q_bar)/(upper_limits[joint] - lower_limits[joint]))**2
         return w
 
     def get_partial_w_q(self, joint_angles, delta):
+        # dicts (everything)
         n = len(joint_angles)
         partial = []
-        for i, joint_angle in enumerate(joint_angles):
-            fq = self.get_w(joint_angles)
-            deltas = np.zeros((n,1))
-            deltas[i] = delta
-            fqdelta = self.get_w(joint_angles + deltas)
+        
+        for joint in hf.frame_dict:
+            delta_angles = joint_angles.copy()
+            delta_angles[joint] = delta_angles[joint] + delta
+            fq = self.get_w(joint_angles, self.lower_limits, self.upper_limits)
+            fqdelta = self.get_w(delta_angles, self.lower_limits, self.upper_limits)
             partial.append( (fqdelta - fq) / delta)
-        return np.matrix(partial)
+        return np.matrix(partial).T # np array in framedict order
 
     def get_b(self, k, delta):
         '''
         Secondary objective function
         '''
-        joint_angles = self._left_arm.joint_angles().values()
+        joint_angles = self._left_arm.joint_angles()
+        
         return k * self.get_partial_w_q(joint_angles,delta)
 
         '''
@@ -196,12 +208,17 @@ def main():
 
     #Wait for command
     while not rospy.is_shutdown():
-        raw_input("Press enter to set goal")
-        p2 = line_follower.get_gripper_coords()
-        rospy.loginfo(p2)
-        raw_input("Press enter to set start")
-        p1 = line_follower.get_gripper_coords()
-        rospy.loginfo(p1)
+        if line_follower.LOAD_GOAL:
+            raw_input("Press enter to load goal from file...")
+            p1, p2 = hf.load_goal()
+        else:
+            raw_input("Press enter to set goal")
+            p2 = line_follower.get_gripper_coords()
+            rospy.loginfo(p2)
+            raw_input("Press enter to set start")
+            p1 = line_follower.get_gripper_coords()
+            rospy.loginfo(p1)
+            hf.save_goal(p1, p2)
         rospy.loginfo('Following...')
        
         p1 = hf.project_point(point, normal, p1)
