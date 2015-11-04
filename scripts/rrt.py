@@ -36,7 +36,8 @@ def get_nearest_neighbor(c_space, q):
     
 
 def check_collision(q):
-    return (q[0] < 0.6 and q[0] > 0.4) and (q[1] < 0.6 and q[1] > 0.4)
+#    return (q[0] < 0.6 and q[0] > 0.4) and (q[1] < 0.6 and q[1] > 0.4)
+    return False
 
 def check_path_collision(q_init, q_goal, epsilon=0.001):
     if check_collision(q_goal):
@@ -81,7 +82,7 @@ class Tree():
 class RRT():
 
     def __init__(self, q_init):
-        self.vertices = spatial.KDTree(q_init)
+        self.vertices = spatial.KDTree([q_init])
         self.tree = Tree(0, [], None)
 
     def nearest_neighbor(self, q):
@@ -144,7 +145,7 @@ def plan_rrt_connect(q_init, q_goal, epsilon=0.01, max_steps=1000):
     Ta = RRT(q_init)
     Tb = RRT(q_goal)
     for _ in range(max_steps):
-        q_rand = sample_c_space_2d(1).squeeze() # Change back to c-space (7D)
+        q_rand = sample_c_space(1).squeeze()
         q_new, status = Ta.extend(q_rand, epsilon)
         if status != "Trapped":
             if Tb.connect(q_new, epsilon) == "Reached":
@@ -155,8 +156,6 @@ def plan_rrt_connect(q_init, q_goal, epsilon=0.01, max_steps=1000):
 def get_path_connect(Ta, Tb, q_init, q_goal):
     path_a = get_path(Ta)
     path_b = get_path(Tb)
-    print 'path a:', np.array(path_a)
-    print 'path b:', np.array(path_b)
     if (path_a[-1] == q_init).all():
         path_a.reverse()
         path_a.pop()
@@ -196,8 +195,8 @@ def smooth_path(path, max_iter=20):
 
 if __name__ == '__main__':
 
-    q_init = np.array([[0, 0]])
-    q_goal = np.array([[1, 1]])
+    q_init = np.array([0, 0])
+    q_goal = np.array([1, 1])
     #print q_init, q_goal
     result = plan_rrt_connect(q_init, q_goal, epsilon=0.03)
     smooth = smooth_path(result)

@@ -201,7 +201,6 @@ def load_goal():
     f.close()
 
     return start, goal
-    
 
 if __name__ == '__main__':
     load_plane()
