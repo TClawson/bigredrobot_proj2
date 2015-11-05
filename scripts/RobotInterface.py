@@ -21,8 +21,10 @@ from baxter_interface import CHECK_VERSION
 class LineFollower(object):
 
     KP = 0.8
+    CONFIG_KP = 0.1
     DIST_THRESH = 0.01
     MOVE_SPEED = 0.07
+    CONFIG_V0 = 0.4
     SAVE_PLANE = False
     LOAD_PLANE = not SAVE_PLANE
     SAVE_GOAL = True
@@ -135,22 +137,33 @@ class LineFollower(object):
         t0 = rospy.Time.now()
         rate = rospy.Rate(self.pub_rate)
 
+        target_size = 0.05
+
         relpos = q_goal - q_init
         max_dist_config = np.linalg.norm(relpos)
         movedir = relpos/max_dist_config
         vel = movedir*v0
 
-        while(self.dist_from_config(q_goal) > max_dist_config*0.1) and not rospy.is_shutdown():
+        q_init_actual = self.get_current_config()
+        max_dist_actual = np.linalg.norm(q_goal - q_init_actual)
+
+        # TODO With too fine a discretization, this still overshoots the goal somehow
+        while(self.dist_from_config(q_init_actual) < max_dist_actual) and not rospy.is_shutdown():
+            print 'dist_from_config(q_init_actual):'
+            print self.dist_from_config(q_init_actual)                         
             self.rate_publisher.publish(self.pub_rate)
-            t = (rospy.Time.now() - t0).to_sec()
-            q_estimate = q_init + t*vel
-            if np.linalg.norm(q_estimate - q_init) > max_dist_config:
-                q_estimate = q_goal
+            #t = (rospy.Time.now() - t0).to_sec()
+            #q_estimate = q_init + t*vel
+            #if np.linalg.norm(q_estimate - q_init) > max_dist_config:
+            #    q_estimate = q_goal
             q_actual = self.get_current_config()
-            error = q_estimate - q_actual
+            #error = q_estimate - q_actual
+            error = q_goal - q_actual
             v_correct = kp*error
-            v_command = vel + v_correct
-            #v_command = v_correct            
+            if np.linalg.norm(v_correct) > v0: # saturate controller at v0
+                v_correct = v0*v_correct/np.linalg.norm(v_correct) # rescale to velocity v0
+            #v_command = vel + v_correct
+            v_command = v_correct            
             self.command_config_velocity(v_command)
             rate.sleep()
 
@@ -160,8 +173,6 @@ class LineFollower(object):
 
             q_init = path[i,:]
             q_goal = path[i+1,:]
-            print i, q_init, q_goal
-            print self.get_current_config()
             self.follow_line_c_space(q_init, q_goal, v0, kp)
         #Stop moving Baxter
         self.command_config_velocity(np.matrix([0,0,0,0,0,0,0]).T)
@@ -256,20 +267,16 @@ def main():
     if line_follower.SAVE_PLANE:
         hf.save_plane(point, normal)
         
-
     while not rospy.is_shutdown():
         raw_input("Press enter to set goal")
         q2 = line_follower.get_current_config()
-        print 'q2:', q2
         raw_input("Press enter to set start")
         q1 = line_follower.get_current_config()
-        print 'q1:', q1
-        path = rrt.plan_rrt_connect(q1, q2, epsilon=0.1)
-        print 'path:'
-        print path
+        path = rrt.plan_rrt_connect(q1, q2, epsilon=0.01)
+        # path = rrt.smooth_path(path)
         # DONT USE WORKSPACE VELOCITY AND KP HERE
-        #line_follower.follow_path_c_space(path, 0.5, 0.05) 
-        line_follower.follow_line_c_space(q1, q2, 0.4, 0.1)
+        line_follower.follow_path_c_space(path, line_follower.CONFIG_V0, line_follower.CONFIG_KP)
+        #line_follower.follow_line_c_space(q1, q2, line_follower.CONFIG_V0, line_follower.CONFIG_KP)
     '''
         #Wait for command
         while not rospy.is_shutdown():
