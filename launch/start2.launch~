@@ -1,9 +1,0 @@
-<launch>
-  <rosparam>
-    /num_blocks: 5
-    /configuration: "stacked_descending"
-    num_arms: 2
-  </rosparam>
-  <node name="robot_interface" pkg="bigredrobot_proj1" type="robot_interface.py" />
-  <node name="controller" pkg="bigredrobot_proj1" type="controller.py" />
-</launch>
