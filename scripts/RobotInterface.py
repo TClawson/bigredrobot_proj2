@@ -33,15 +33,14 @@ class LineFollower(object):
     DELTA = 0.01
 
     def __init__(self):
-        rospy.loginfo("Initializing LineFollower")
+        rospy.logwarn("Initializing LineFollower")
         self.rate_publisher = rospy.Publisher('robot/joint_state_publish_rate',
                                          UInt16, queue_size=10)
         self._left_arm = baxter_interface.limb.Limb("left")
         self._left_joint_names = self._left_arm.joint_names()
         self._left_kin = baxter_kinematics('left')
-        self._listener =  tf.TransformListener()
         rospy.sleep(2)
-        self._listener.waitForTransform('base', 'base', rospy.Time(), rospy.Duration(4)) # wait for transforms to publish      
+        rospy.loginfo("Stuff")     
 
         # control parameters
         self.pub_rate = 500.0  # Hz
@@ -56,6 +55,8 @@ class LineFollower(object):
 
         # set joint state publishing to 500Hz
         self.rate_publisher.publish(self.pub_rate)
+
+        rospy.wait_for_service('check_collision')
 
     def _reset_control_modes(self):
         rate = rospy.Rate(self.pub_rate)
@@ -149,21 +150,23 @@ class LineFollower(object):
 
         # TODO With too fine a discretization, this still overshoots the goal somehow
         while(self.dist_from_config(q_init_actual) < max_dist_actual) and not rospy.is_shutdown():
-            print 'dist_from_config(q_init_actual):'
-            print self.dist_from_config(q_init_actual)                         
+            #print 'dist_from_config(q_init_actual):'
+            #print self.dist_from_config(q_init_actual)     
+            #print 'max_dist_actual:'
+            #print max_dist_actual                    
             self.rate_publisher.publish(self.pub_rate)
-            #t = (rospy.Time.now() - t0).to_sec()
-            #q_estimate = q_init + t*vel
-            #if np.linalg.norm(q_estimate - q_init) > max_dist_config:
-            #    q_estimate = q_goal
+            t = (rospy.Time.now() - t0).to_sec()
+            q_estimate = q_init + t*vel
+            if np.linalg.norm(q_estimate - q_init) > max_dist_config:
+                q_estimate = q_goal
             q_actual = self.get_current_config()
-            #error = q_estimate - q_actual
-            error = q_goal - q_actual
+            error = q_estimate - q_actual
+            #error = q_goal - q_actual
             v_correct = kp*error
-            if np.linalg.norm(v_correct) > v0: # saturate controller at v0
-                v_correct = v0*v_correct/np.linalg.norm(v_correct) # rescale to velocity v0
-            #v_command = vel + v_correct
-            v_command = v_correct            
+            #if np.linalg.norm(v_correct) > v0: # saturate controller at v0
+            #    v_correct = v0*v_correct/np.linalg.norm(v_correct) # rescale to velocity v0
+            v_command = vel + v_correct
+            #v_command = v_correct            
             self.command_config_velocity(v_command)
             rate.sleep()
 
@@ -245,8 +248,8 @@ class LineFollower(object):
         return k*np.matrix(w).T
     '''
 def main():
-
-    rospy.loginfo("Initializing node... ")
+#  <include file="$(find collision_checker)/launch/collision_server.launch"/>
+    rospy.logwarn("Initializing node... ")
     rospy.init_node("velocity_follower")
     line_follower = LineFollower()
     rospy.on_shutdown(line_follower.clean_shutdown)
@@ -268,11 +271,18 @@ def main():
         hf.save_plane(point, normal)
         
     while not rospy.is_shutdown():
-        raw_input("Press enter to set goal")
+        rospy.sleep(3)
+        line_follower.set_neutral()
+        #raw_input("Press enter to set goal")
         q2 = line_follower.get_current_config()
-        raw_input("Press enter to set start")
-        q1 = line_follower.get_current_config()
-        path = rrt.plan_rrt_connect(q1, q2, epsilon=0.01)
+        #raw_input("Press enter to set start")
+        #q1 = line_follower.get_current_config()
+
+        #simulation stuff
+        q1 = q2 + np.array([-0.3,0,0,0,0,0,0])
+
+
+        path = rrt.plan_rrt_connect(q2, q1, epsilon=0.05)#rrt.plan_rrt_connect(q1, q2, epsilon=0.01)
         # path = rrt.smooth_path(path)
         # DONT USE WORKSPACE VELOCITY AND KP HERE
         line_follower.follow_path_c_space(path, line_follower.CONFIG_V0, line_follower.CONFIG_KP)

@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 
+
 def sample_c_space(num_samples):
     lower, upper = hf.get_limits()
     q = np.zeros((len(hf.frame_dict), num_samples))
@@ -37,7 +38,13 @@ def get_nearest_neighbor(c_space, q):
 
 def check_collision(q):
 #    return (q[0] < 0.6 and q[0] > 0.4) and (q[1] < 0.6 and q[1] > 0.4)
-    return False
+#    return False
+    try:
+        checker = rospy.ServiceProxy('check_collision', CheckCollision)
+        response = checker(self.arm, q.tolist())
+    except rospy.ServiceException, e:
+        print e
+    return response.collision
 
 def check_path_collision(q_init, q_goal, epsilon=0.001):
     if check_collision(q_goal):
