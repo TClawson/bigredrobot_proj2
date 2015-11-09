@@ -1,0 +1,6 @@
+<launch>
+  <include file="$(find collision_checker)/launch/collision_server.launch">
+       <arg name="visualize" value="true"/>
+  </include>
+  <node name="robot_interface" pkg="bigredrobot_proj2" type="RobotInterface.py" />
+</launch>

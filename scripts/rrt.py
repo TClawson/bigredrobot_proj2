@@ -4,6 +4,8 @@ import numpy as np
 import rospy
 import HelperFunctions as hf
 import scipy.spatial as spatial
+from collision_checker.srv import *
+from std_msgs.msg import String
 
 import pylab
 import matplotlib.pyplot as plt
@@ -41,12 +43,12 @@ def check_collision(q):
 #    return False
     try:
         checker = rospy.ServiceProxy('check_collision', CheckCollision)
-        response = checker(self.arm, q.tolist())
+        response = checker(String('left'), q.tolist())
     except rospy.ServiceException, e:
         print e
     return response.collision
 
-def check_path_collision(q_init, q_goal, epsilon=0.001):
+def check_path_collision(q_init, q_goal, epsilon=0.01):
     if check_collision(q_goal):
         return True    
     relpos = q_goal - q_init
@@ -148,7 +150,7 @@ class RRT():
         return self.vertices.data[index]
             
 
-def plan_rrt_connect(q_init, q_goal, epsilon=0.01, max_steps=1000):
+def plan_rrt_connect(q_init, q_goal, epsilon=0.01, max_steps=300):
     Ta = RRT(q_init)
     Tb = RRT(q_goal)
     for _ in range(max_steps):

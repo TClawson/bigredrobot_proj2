@@ -21,11 +21,19 @@ from baxter_interface import CHECK_VERSION
 
 class LineFollower(object):
 
-
+    KP = 0.8
     CONFIG_KP = 0.1
     DIST_THRESH = 0.01
+    MOVE_SPEED = 0.07
     CONFIG_V0 = 0.4
-   
+    K0 = 1
+    DELTA = 0.01
+
+    SAVE_PLANE = False
+    LOAD_PLANE = not SAVE_PLANE
+    SAVE_GOAL = True
+    LOAD_GOAL = not SAVE_GOAL
+    
 
     def __init__(self):
         rospy.logwarn("Initializing LineFollower")
@@ -34,8 +42,7 @@ class LineFollower(object):
         self._left_arm = baxter_interface.limb.Limb("left")
         self._left_joint_names = self._left_arm.joint_names()
         self._left_kin = baxter_kinematics('left')
-        rospy.sleep(2)
-        rospy.loginfo("Stuff")     
+        rospy.sleep(2)     
 
         # control parameters
         self.pub_rate = 500.0  # Hz
@@ -51,11 +58,6 @@ class LineFollower(object):
         # set joint state publishing to 500Hz
         self.rate_publisher.publish(self.pub_rate)
 
-        rospy.wait_for_service('check_collision')
-
-        rospy.Subscriber("baxter_input", String, self.input_callback)
-        self.input_received = False
-
     def _reset_control_modes(self):
         rate = rospy.Rate(self.pub_rate)
         for _ in xrange(100):
@@ -66,15 +68,6 @@ class LineFollower(object):
             rate.sleep()
         return True
     
-    def input_callback(self, data):
-        self.input_received = True
-
-    def wait_for_input(self):
-        while not rospy.is_shutdown() and not self.input_received:
-            pass
-        self.input_received = False
-            
-
     def set_neutral(self):
         """
         Sets both arms back into a neutral pose.
@@ -85,7 +78,7 @@ class LineFollower(object):
     def get_gripper_coords(self):
         pos = self._left_arm.endpoint_pose().popitem()[1]
         return np.matrix([pos.x, pos.y, pos.z]).T
-
+    '''
     def get_current_config(self):
         d = self._left_arm.joint_angles()
         cur_config = []
@@ -93,7 +86,7 @@ class LineFollower(object):
             cur_config.append(d[joint])
 
         return np.array(cur_config)
-
+    '''
     def clean_shutdown(self):
         rospy.loginfo("\nCrashing stuff...")
         #return to normal
@@ -127,7 +120,9 @@ class LineFollower(object):
         v12 = p12/np.linalg.norm(p12)*v0
 
         rospy.loginfo("Moving. Press Ctrl-C to stop...")
-        while (self.dist_from_point(p1) < max_dist) and not rospy.is_shutdown():
+        #while (self.dist_from_point(p1) < max_dist) and not rospy.is_shutdown():
+        t = 0
+        while (t<10) and not rospy.is_shutdown():
             self.rate_publisher.publish(self.pub_rate)
             t = (rospy.Time.now() - t0).to_sec()
             p_estimate = p1 + t*v12
@@ -135,59 +130,20 @@ class LineFollower(object):
             error = p_estimate - p_actual
             v_correct = kp*error
             v_command = v12 + v_correct
+            v_command = np.matrix([0,0,0]).T
             squiggle = np.concatenate((v_command, np.matrix([0,0,0]).T))
             self.command_velocity(squiggle)
             rate.sleep()
 
         self.command_velocity(np.matrix([0,0,0,0,0,0]).T);        
 
-    def follow_line_c_space(self, q_init, q_goal, v0, kp):
-        t0 = rospy.Time.now()
-        rate = rospy.Rate(self.pub_rate)
-
-        target_size = 0.05
-
-        relpos = q_goal - q_init
-        max_dist_config = np.linalg.norm(relpos)
-        movedir = relpos/max_dist_config
-        vel = movedir*v0
-
-        q_init_actual = self.get_current_config()
-        max_dist_actual = np.linalg.norm(q_goal - q_init_actual)
-
-        # TODO With too fine a discretization, this still overshoots the goal somehow
-        while(self.dist_from_config(q_init_actual) < max_dist_actual) and not rospy.is_shutdown():              
-            self.rate_publisher.publish(self.pub_rate)
-            t = (rospy.Time.now() - t0).to_sec()
-            q_estimate = q_init + t*vel
-            if np.linalg.norm(q_estimate - q_init) > max_dist_config:
-                q_estimate = q_goal
-            q_actual = self.get_current_config()
-            error = q_estimate - q_actual
-            v_correct = kp*error      
-            v_command = vel + v_correct
-            self.command_config_velocity(v_command)
-            rate.sleep()
-
-    def follow_path_c_space(self, path, v0, kp): 
-        rospy.loginfo("Moving. Press Ctrl-C to stop...")
-        for i in range(path.shape[0] - 1):
-
-            q_init = path[i,:]
-            q_goal = path[i+1,:]
-            self.follow_line_c_space(q_init, q_goal, v0, kp)
-        #Stop moving Baxter
-        self.command_config_velocity(np.matrix([0,0,0,0,0,0,0]).T)
-            
-   
-    def command_config_velocity(self, q_dot):
-        cmd = {joint: q_dot[i] for i, joint in enumerate(self._left_joint_names)}
+    def command_velocity(self, squiggle):
+        J = self._left_kin.jacobian()
+        Jinv = hf.rpinv(J)
+        q_dot = Jinv*squiggle + (np.identity(7) - (Jinv*J))*self.get_b(self.K0, self.DELTA) 
+        cmd = {joint: q_dot[i, 0] for i, joint in enumerate(self._left_joint_names)}
         self._left_arm.set_joint_velocities(cmd)
-
-    def dist_from_config(self, q):
-        q_cur = np.array(self.get_current_config())
-        return np.linalg.norm(q_cur - q)
-
+   
     def dist_from_point(self, p):
         '''
         Gets the distance of the gripper from some point p.
@@ -197,36 +153,83 @@ class LineFollower(object):
         r = gripper - p
         return np.linalg.norm(r)
 
-   
+    def get_w_joint_limits(self, joint_angles, lower_limits, upper_limits):
+        '''
+        upper_limits and lower_limits are dicts, so is joint_angles
+        '''
+        n = len(hf.frame_dict)
+        w = 0
+        for joint in hf.frame_dict:
+            q_bar = (lower_limits[joint] + upper_limits[joint])/2
+            w = w - 1.0/(2.0*n)*((joint_angles[joint] - q_bar)/(upper_limits[joint] - lower_limits[joint]))**2
+        return w
+
+    def get_partial_w_q_joint_limits(self, joint_angles, delta):
+        # dicts (everything)
+        n = len(joint_angles)
+        partial = []
+        
+        for joint in hf.frame_dict:
+            delta_angles = joint_angles.copy()
+            delta_angles[joint] = delta_angles[joint] + delta
+            fq = self.get_w_joint_limits(joint_angles, self.lower_limits, self.upper_limits)
+            fqdelta = self.get_w_joint_limits(delta_angles, self.lower_limits, self.upper_limits)
+            partial.append( (fqdelta - fq) / delta)
+        return np.matrix(partial).T # np array in framedict order
+
+    def get_b(self, k, delta):
+        '''
+        Secondary objective function
+        '''
+        joint_angles = self._left_arm.joint_angles()
+        
+        return k * self.get_partial_w_q_joint_limits(joint_angles,delta)
+        
+
 def main():
 #  <include file="$(find collision_checker)/launch/collision_server.launch"/>
-    rospy.logwarn("Initializing node... ")
+    rospy.loginfo("Initializing node... ")
     rospy.init_node("velocity_follower")
     line_follower = LineFollower()
     rospy.on_shutdown(line_follower.clean_shutdown)
 
+    #Define plane
+    if line_follower.LOAD_PLANE:
+        rospy.loginfo("Loading plane from file..")
+        point, normal = hf.load_plane()
+        rospy.loginfo("Loaded")
+    else:
+        raw_input("Define the first point on the plane")
+        plane1 = line_follower.get_gripper_coords()
+        raw_input("Define the second point on the plane")
+        plane2 = line_follower.get_gripper_coords()
+        raw_input("Define the third point on the plane")
+        plane3 = line_follower.get_gripper_coords()
+        point, normal = hf.get_plane(plane1, plane2, plane3)
+
+    if line_follower.SAVE_PLANE:
+        hf.save_plane(point, normal)
+    
+    #Wait for command
     while not rospy.is_shutdown():
-        rospy.sleep(3)
-        #line_follower.set_neutral()
-        rospy.logwarn("Press enter to set goal")
-        line_follower.wait_for_input()
-        q2 = line_follower.get_current_config()
-        rospy.logwarn("Press enter to set start")
-        line_follower.wait_for_input()
-        q1 = line_follower.get_current_config()
+        if line_follower.LOAD_GOAL:
+            raw_input("Press enter to load goal from file...")
+            p1, p2 = hf.load_goal()
+        else:
+            raw_input("Press enter to set goal")
+            p2 = line_follower.get_gripper_coords()
+            rospy.loginfo(p2)
+            raw_input("Press enter to set start")
+            p1 = line_follower.get_gripper_coords()
+            rospy.loginfo(p1)
+            hf.save_goal(p1, p2)
+        rospy.loginfo('Following...')
+       
+        p1 = hf.project_point(point, normal, p1)
+        p2 = hf.project_point(point, normal, p2)
 
-        #simulation stuff
-        #q1 = q2 + np.array([-0.3,0,0,0,0,0,0])
-
-        rospy.logwarn("Planning path....")
-        path = rrt.plan_rrt_connect(q1, q2, epsilon=0.05)#rrt.plan_rrt_connect(q1, q2, epsilon=0.01)
-        rospy.logwarn("Smoothing path....")
-        path = rrt.smooth_path(path, max_iter = 80)
-        # DONT USE WORKSPACE VELOCITY AND KP HERE
-        rospy.logwarn("Following path....")
-        line_follower.follow_path_c_space(path, line_follower.CONFIG_V0, line_follower.CONFIG_KP)
-        #line_follower.follow_line_c_space(q1, q2, line_follower.CONFIG_V0, line_follower.CONFIG_KP)
-   
+#        line_follower.follow_line(p1, p2, line_follower.MOVE_SPEED)     #Almost certainly possibly meters/second
+        line_follower.follow_line_p_control(p1, p2, line_follower.MOVE_SPEED, line_follower.KP)     #Almost certainly possibly meters/second
     rospy.loginfo("Done.")
 
 if __name__ == '__main__':
