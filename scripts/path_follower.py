@@ -6,7 +6,7 @@ import rospkg
 import tf
 import rrt
 import numpy as np
-import HelperFunctions as hf
+import helper_functions as hf
 from baxter_pykdl import baxter_kinematics
 
 from std_msgs.msg import (
@@ -28,7 +28,7 @@ class LineFollower(object):
    
 
     def __init__(self):
-        rospy.logwarn("Initializing LineFollower")
+        rospy.logwarn("Initializing ")
         self.rate_publisher = rospy.Publisher('robot/joint_state_publish_rate',
                                          UInt16, queue_size=10)
         self._left_arm = baxter_interface.limb.Limb("left")
@@ -208,11 +208,9 @@ def main():
     while not rospy.is_shutdown():
         rospy.sleep(3)
         #line_follower.set_neutral()
-        rospy.logwarn("Press enter to set goal")
-        line_follower.wait_for_input()
+        raw_input("Press enter to set goal")
         q2 = line_follower.get_current_config()
-        rospy.logwarn("Press enter to set start")
-        line_follower.wait_for_input()
+        raw_input("Press enter to set start")
         q1 = line_follower.get_current_config()
 
         #simulation stuff

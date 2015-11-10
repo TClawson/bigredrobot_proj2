@@ -2,7 +2,7 @@
 
 import numpy as np
 import rospy
-import HelperFunctions as hf
+import helper_functions as hf
 import scipy.spatial as spatial
 from collision_checker.srv import *
 from std_msgs.msg import String
@@ -151,6 +151,12 @@ class RRT():
             
 
 def plan_rrt_connect(q_init, q_goal, epsilon=0.01, max_steps=300):
+    if check_collision(q_goal):
+        rospy.logerr("Goal configuration is in collision, no path possible")
+        return None
+    elif check_collision(q_init):
+        rospy.logerr("Initial configuration is in collision, no path possible")
+        return None
     Ta = RRT(q_init)
     Tb = RRT(q_goal)
     for _ in range(max_steps):
@@ -197,8 +203,6 @@ def smooth_path(path, max_iter=20):
         if not check_path_collision(start, end):
             path_a = path[:start_idx+1]
             path_b = path[end_idx:]
-            print 'path a:', path_a
-            print 'path b:', path_b
             path = np.concatenate([path_a, path_b])
     return path
 

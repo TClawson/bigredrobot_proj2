@@ -6,6 +6,7 @@ import rospy
 import geometry_msgs.msg
 import rospkg
 import xml.etree.ElementTree as ET
+from scipy import interpolate
 
 
 #NOTE: Pass in all transforms relative to origin O_0
@@ -201,6 +202,16 @@ def load_goal():
     f.close()
 
     return start, goal
+
+def get_spline(p1, p2, p3, p4):
+    x = np.array([p1[0,0], p2[0,0], p3[0,0], p4[0,0]])
+    y = np.array([p1[1,0], p2[1,0], p3[1,0], p4[1,0]])
+    z = np.array([p1[2,0], p2[2,0], p3[2,0], p4[2,0]])
+    rospy.logwarn(x)
+    tck, u = interpolate.splprep([x, y, z])
+    print 'u:', u
+    return tck, u
+
 
 if __name__ == '__main__':
     load_plane()

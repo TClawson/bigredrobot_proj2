@@ -4,10 +4,11 @@ import math
 import rospy
 import rospkg
 import tf
-import rrt
+
 import numpy as np
-import HelperFunctions as hf
+import helper_functions as hf
 from baxter_pykdl import baxter_kinematics
+from scipy import interpolate
 
 from std_msgs.msg import (
     UInt16,
@@ -18,22 +19,19 @@ import baxter_interface
 
 from baxter_interface import CHECK_VERSION
 
-
 class LineFollower(object):
 
     KP = 0.8
-    CONFIG_KP = 0.1
     DIST_THRESH = 0.01
     MOVE_SPEED = 0.07
-    CONFIG_V0 = 0.4
-    K0 = 1
+    K0 = 0
     DELTA = 0.01
 
-    SAVE_PLANE = False
+    SAVE_PLANE = True
     LOAD_PLANE = not SAVE_PLANE
     SAVE_GOAL = True
     LOAD_GOAL = not SAVE_GOAL
-    
+   
 
     def __init__(self):
         rospy.logwarn("Initializing LineFollower")
@@ -114,33 +112,31 @@ class LineFollower(object):
     def follow_line_p_control(self, p1, p2, v0, kp):
         rate = rospy.Rate(self.pub_rate)
         t0 = rospy.Time.now()
-
+        p1 = p1.squeeze()
+        p2 = p2.squeeze()
         p12 = p2 - p1 # relative position of p1 wrt p2
         max_dist = np.linalg.norm(p12)
+        max_dist_actual = self.dist_from_point(p2)
         v12 = p12/np.linalg.norm(p12)*v0
-
         rospy.loginfo("Moving. Press Ctrl-C to stop...")
-        #while (self.dist_from_point(p1) < max_dist) and not rospy.is_shutdown():
-        t = 0
-        while (t<10) and not rospy.is_shutdown():
+        while (self.dist_from_point(p1) < max_dist_actual) and not rospy.is_shutdown():
             self.rate_publisher.publish(self.pub_rate)
             t = (rospy.Time.now() - t0).to_sec()
             p_estimate = p1 + t*v12
-            p_actual = self.get_gripper_coords()
+            p_actual = self.get_gripper_coords().squeeze()
             error = p_estimate - p_actual
             v_correct = kp*error
             v_command = v12 + v_correct
-            v_command = np.matrix([0,0,0]).T
-            squiggle = np.concatenate((v_command, np.matrix([0,0,0]).T))
+            squiggle = np.concatenate((np.matrix(v_command).T, np.matrix([0,0,0]).T))
             self.command_velocity(squiggle)
             rate.sleep()
-
+        rospy.loginfo("Done moving this line")
         self.command_velocity(np.matrix([0,0,0,0,0,0]).T);        
 
     def command_velocity(self, squiggle):
         J = self._left_kin.jacobian()
         Jinv = hf.rpinv(J)
-        q_dot = Jinv*squiggle + (np.identity(7) - (Jinv*J))*self.get_b(self.K0, self.DELTA) 
+        q_dot = Jinv*squiggle #+ (np.identity(7) - (Jinv*J))*self.get_b(self.K0, self.DELTA) 
         cmd = {joint: q_dot[i, 0] for i, joint in enumerate(self._left_joint_names)}
         self._left_arm.set_joint_velocities(cmd)
    
@@ -150,7 +146,7 @@ class LineFollower(object):
         'p' is a numpy column vector
         '''
         gripper = self.get_gripper_coords()
-        r = gripper - p
+        r = gripper.squeeze() - p.squeeze()
         return np.linalg.norm(r)
 
     def get_w_joint_limits(self, joint_angles, lower_limits, upper_limits):
@@ -184,7 +180,23 @@ class LineFollower(object):
         joint_angles = self._left_arm.joint_angles()
         
         return k * self.get_partial_w_q_joint_limits(joint_angles,delta)
-        
+     
+    def follow_spline(self, tck, u, u_step=0.1):
+        u_min = min(u)
+        u_max = max(u)
+        new_u = np.arange(u_min, u_max+u_step, u_step)
+        out = interpolate.splev(new_u, tck)
+        x = out[0]
+        y = out[1]
+        z = out[2]
+        print 'x:', x
+        for i in range(len(new_u)-1):
+            p1 = np.array([x[i], y[i], z[i]])
+            p2 = np.array([x[i+1], y[i+1], z[i+1]])
+            print 'p1:', p1
+            print 'p2:', p2
+            self.follow_line_p_control(p1, p2, self.MOVE_SPEED, self.KP)
+        return 'Yay'
 
 def main():
 #  <include file="$(find collision_checker)/launch/collision_server.launch"/>
@@ -212,24 +224,49 @@ def main():
     
     #Wait for command
     while not rospy.is_shutdown():
-        if line_follower.LOAD_GOAL:
-            raw_input("Press enter to load goal from file...")
-            p1, p2 = hf.load_goal()
-        else:
+        spline_time = raw_input("Spline time? y/n")
+        if spline_time == 'y':
+            print "Spline mode entered"
             raw_input("Press enter to set goal")
+            p4 = line_follower.get_gripper_coords()
+            rospy.loginfo(p4)
+            raw_input("Press enter to set midpoint1")
+            p3 = line_follower.get_gripper_coords()
+            rospy.loginfo(p3)
+            raw_input("Press enter to set midpoint2")
             p2 = line_follower.get_gripper_coords()
             rospy.loginfo(p2)
             raw_input("Press enter to set start")
             p1 = line_follower.get_gripper_coords()
             rospy.loginfo(p1)
-            hf.save_goal(p1, p2)
-        rospy.loginfo('Following...')
-       
-        p1 = hf.project_point(point, normal, p1)
-        p2 = hf.project_point(point, normal, p2)
 
-#        line_follower.follow_line(p1, p2, line_follower.MOVE_SPEED)     #Almost certainly possibly meters/second
-        line_follower.follow_line_p_control(p1, p2, line_follower.MOVE_SPEED, line_follower.KP)     #Almost certainly possibly meters/second
+            p1 = hf.project_point(point, normal, p1)
+            p2 = hf.project_point(point, normal, p2)
+            p3 = hf.project_point(point, normal, p3)
+            p4 = hf.project_point(point, normal, p4)
+
+            tck, u = hf.get_spline(p1, p2, p3, p4)
+            line_follower.follow_spline(tck, u)
+    
+        else:
+            print "Line mode entered"
+            if line_follower.LOAD_GOAL:
+                raw_input("Press enter to load goal from file...")
+                p1, p2 = hf.load_goal()
+            else:
+                raw_input("Press enter to set goal")
+                p2 = line_follower.get_gripper_coords()
+                rospy.loginfo(p2)
+                raw_input("Press enter to set start")
+                p1 = line_follower.get_gripper_coords()
+                rospy.loginfo(p1)
+                hf.save_goal(p1, p2)
+            rospy.loginfo('Following...')
+       
+            p1 = hf.project_point(point, normal, p1)
+            p2 = hf.project_point(point, normal, p2)
+
+            line_follower.follow_line_p_control(p1, p2, line_follower.MOVE_SPEED, line_follower.KP)    
     rospy.loginfo("Done.")
 
 if __name__ == '__main__':
