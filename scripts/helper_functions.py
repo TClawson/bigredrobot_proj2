@@ -1,15 +1,10 @@
 #!/usr/bin/env python
 
 import numpy as np
-import tf
 import rospy
-import geometry_msgs.msg
 import rospkg
 import xml.etree.ElementTree as ET
 from scipy import interpolate
-
-
-#NOTE: Pass in all transforms relative to origin O_0
 
 frame_dict = {  "left_s0": "left_upper_shoulder",
                 "left_s1": "left_lower_shoulder",
@@ -23,6 +18,9 @@ PLANE_FILE = '/scripts/plane.txt'
 GOAL_FILE = '/scripts/goal.txt'
 
 def get_limits():
+    '''
+    Returns two dictionaries of lower and upper joint limits for all joints
+    '''
     rospack = rospkg.RosPack()
     path = rospack.get_path("baxter_description")
     tree = ET.parse(path + "/urdf/baxter.urdf")
@@ -48,66 +46,12 @@ def get_joint_info(joint_angles, joint_limits):
         joint_info[joint_name] = joint_angles[joint_name], joint_limits[joint_name][0], joint_limits[joint_name][1]
 
     return joint_info
-    
-
-def get_transforms(listener, limb):
-    joints = limb.joint_names()
-    transforms = []
-    for joint in joints:
-        #magic!
-        frame = frame_dict[joint]
-        try:
-            (trans,rot) = listener.lookupTransform(frame, 'base', rospy.Time(0)) 
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
-            rospy.logwarn(e)
-            rospy.logwarn('Bad things have happened re: joint frame transforms. Frame: %s' %(frame))
-        transforms.append((trans,rot))
-    return transforms
-   
-
-
-def jacobian(transforms):
-    '''
-    Returns Jacobian from an input list of (trans, rot) for each frame
-    '''   
-    # Utility functions
-    ros_to_np_q = lambda q: np.array(q)
-    q_mult = tf.transformations.quaternion_multiply
-    q_conj = tf.transformations.quaternion_conjugate
-        
-    # Convert ROS quaternions to 4-element numpy arrays
-    np_quaternions = [ros_to_np_q(q) for (_, q) in transforms] 
-
-    # Find z axis vector for each frame
-    z_base = np.array([0,0,1,0]) # z-axis in base frame (as quaternion)
-    z_vectors = []
-    for q in np_quaternions:
-        z_quaternion = q_mult(q_mult(q, z_base), q_conj(q)) #p' = qpq^-1
-        z_vectors.append(z_quaternion[0:3])
-
-    J = np.empty((6, len(transforms)))
-    for i, (frame_origin, _) in enumerate(transforms):
-        J[0:3,i] = np.cross(z_vectors[i], frame_origin) # z_i * (O_n - O_i)
-        J[3:6,i] = z_vectors[i] # z_i
-    
-    return J
-
-
-# q' = J^+ xi + (I - J^+ J)b
-
-
 
 def rpinv(J):
     '''
     Right pseudo inverse
     '''
     return np.dot(J.T, np.linalg.inv(np.dot(J, J.T)))
-
-def lpinv(J):
-    '''
-    Left pseudo inverse
-    '''
-    return np.dot(np.linalg.inv(np.dot(J.T, J)), J.T)
 
 def find_joint_vels(J,ee_vels,b):
     '''
@@ -204,6 +148,10 @@ def load_goal():
     return start, goal
 
 def get_spline(p1, p2, p3, p4):
+    '''
+    Interpolates between 4 points using a cubic spline, returns spline
+    representation and parameter values 'u'
+    '''
     x = np.array([p1[0,0], p2[0,0], p3[0,0], p4[0,0]])
     y = np.array([p1[1,0], p2[1,0], p3[1,0], p4[1,0]])
     z = np.array([p1[2,0], p2[2,0], p3[2,0], p4[2,0]])

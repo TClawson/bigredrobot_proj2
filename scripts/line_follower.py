@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 
-import math
 import rospy
-import rospkg
-import tf
 
 import numpy as np
 import helper_functions as hf
@@ -12,7 +9,7 @@ from scipy import interpolate
 
 from std_msgs.msg import (
     UInt16,
-    String,
+    String
 )
 
 import baxter_interface
@@ -20,13 +17,16 @@ import baxter_interface
 from baxter_interface import CHECK_VERSION
 
 class LineFollower(object):
+    '''
+    A class designed to follow a line in the workspace
+    '''
+    
+    KP = 0.8                # Line following proportional gain
+    MOVE_SPEED = 0.07       # Velocity used when following the line
+    K0 = 0                  # Gain for the secondary objective function
+    DELTA = 0.01            # Step size for partial derivative calculation
 
-    KP = 0.8
-    DIST_THRESH = 0.01
-    MOVE_SPEED = 0.07
-    K0 = 0
-    DELTA = 0.01
-
+    # Used for debugging - quickly save/load goals and a plane
     SAVE_PLANE = True
     LOAD_PLANE = not SAVE_PLANE
     SAVE_GOAL = True
@@ -57,6 +57,9 @@ class LineFollower(object):
         self.rate_publisher.publish(self.pub_rate)
 
     def _reset_control_modes(self):
+        '''
+        Resets the joint publish rate and stops writing commands to Baxter
+        '''
         rate = rospy.Rate(self.pub_rate)
         for _ in xrange(100):
             if rospy.is_shutdown():
@@ -67,35 +70,26 @@ class LineFollower(object):
         return True
     
     def set_neutral(self):
-        """
+        '''
         Sets both arms back into a neutral pose.
-        """
+        '''
         rospy.loginfo("Moving to neutral pose...")
         self._left_arm.move_to_neutral()
 
     def get_gripper_coords(self):
         pos = self._left_arm.endpoint_pose().popitem()[1]
         return np.matrix([pos.x, pos.y, pos.z]).T
-    '''
-    def get_current_config(self):
-        d = self._left_arm.joint_angles()
-        cur_config = []
-        for joint in self._left_joint_names:
-            cur_config.append(d[joint])
 
-        return np.array(cur_config)
-    '''
     def clean_shutdown(self):
         rospy.loginfo("\nCrashing stuff...")
-        #return to normal
         self._reset_control_modes()
-        #self.set_neutral()
-        #if not self._init_state:
-        #    rospy.loginfo("Disabling robot...")
-        #    self.interface.disable()
         return True
 
     def follow_line(self, p1, p2, v0):
+        '''
+        Deprecated - use follow_line_p_control instead
+        Follows a straight line in the workspace
+        '''
         rate = rospy.Rate(self.pub_rate)
 
         p12 = p2 - p1
@@ -110,6 +104,9 @@ class LineFollower(object):
             rate.sleep()
 
     def follow_line_p_control(self, p1, p2, v0, kp):
+        '''
+        Follows a straight line in the workspace using proportional control
+        '''
         rate = rospy.Rate(self.pub_rate)
         t0 = rospy.Time.now()
         p1 = p1.squeeze()
@@ -134,9 +131,12 @@ class LineFollower(object):
         self.command_velocity(np.matrix([0,0,0,0,0,0]).T);        
 
     def command_velocity(self, squiggle):
+        '''
+        Commands joint velocities using jacobian magicks
+        '''
         J = self._left_kin.jacobian()
         Jinv = hf.rpinv(J)
-        q_dot = Jinv*squiggle #+ (np.identity(7) - (Jinv*J))*self.get_b(self.K0, self.DELTA) 
+        q_dot = Jinv*squiggle + (np.identity(7) - (Jinv*J))*self.get_b(self.K0, self.DELTA) 
         cmd = {joint: q_dot[i, 0] for i, joint in enumerate(self._left_joint_names)}
         self._left_arm.set_joint_velocities(cmd)
    
@@ -161,7 +161,10 @@ class LineFollower(object):
         return w
 
     def get_partial_w_q_joint_limits(self, joint_angles, delta):
-        # dicts (everything)
+        '''
+        For the secondary objective function, get the partial of w wrt q
+        '''
+        # All inputs are dicts
         n = len(joint_angles)
         partial = []
         
@@ -175,13 +178,16 @@ class LineFollower(object):
 
     def get_b(self, k, delta):
         '''
-        Secondary objective function
+        Secondary objective function, designed to avoid joint limits
         '''
         joint_angles = self._left_arm.joint_angles()
         
         return k * self.get_partial_w_q_joint_limits(joint_angles,delta)
      
     def follow_spline(self, tck, u, u_step=0.1):
+        '''
+        Follows a spline in the workspace
+        '''
         u_min = min(u)
         u_max = max(u)
         new_u = np.arange(u_min, u_max+u_step, u_step)
@@ -189,23 +195,18 @@ class LineFollower(object):
         x = out[0]
         y = out[1]
         z = out[2]
-        print 'x:', x
         for i in range(len(new_u)-1):
             p1 = np.array([x[i], y[i], z[i]])
             p2 = np.array([x[i+1], y[i+1], z[i+1]])
-            print 'p1:', p1
-            print 'p2:', p2
             self.follow_line_p_control(p1, p2, self.MOVE_SPEED, self.KP)
-        return 'Yay'
 
 def main():
-#  <include file="$(find collision_checker)/launch/collision_server.launch"/>
     rospy.loginfo("Initializing node... ")
     rospy.init_node("velocity_follower")
     line_follower = LineFollower()
     rospy.on_shutdown(line_follower.clean_shutdown)
 
-    #Define plane
+    #Define a plane to write on
     if line_follower.LOAD_PLANE:
         rospy.loginfo("Loading plane from file..")
         point, normal = hf.load_plane()
