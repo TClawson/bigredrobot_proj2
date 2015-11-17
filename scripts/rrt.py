@@ -226,20 +226,32 @@ def smooth_path(path, max_iter=20):
     '''
     Smooths path by attempting to randomly connect points max_iter times
     '''
-    for _ in range(max_iter):
+    point_ids = range(len(path))
+    checked_pairs = []
+    for i in range(max_iter):
         pathlen = len(path)
         start_idx = np.random.randint(0,pathlen)
         end_idx = np.random.randint(0,pathlen)  
-        if start_idx == end_idx:
-            continue
         if start_idx > end_idx:
             start_idx, end_idx = end_idx, start_idx
         start = path[start_idx]
         end = path[end_idx]
+        # Update checked pairs list
+        start_id = point_ids[start_idx]
+        end_id = point_ids[end_idx]
+        # Don't try to connect the same point, adjacent points, or previously connected points
+        if abs(start_idx - end_idx) <= 1 or (start_id, end_id) in checked_pairs:
+            print 'Bad Pair', i, len(path)
+            continue
+        checked_pairs.append((start_id, end_id))
+        # If it's valid, create the new path
         if not check_path_collision(start, end):
             path_a = path[:start_idx+1]
             path_b = path[end_idx:]
+            ids_a = point_ids[:start_idx+1]
+            ids_b = point_ids[end_idx:]
             path = np.concatenate([path_a, path_b])
+            point_ids = ids_a + ids_b
     return path
 
 if __name__ == '__main__':

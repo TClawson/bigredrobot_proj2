@@ -20,14 +20,23 @@ class LineFollower(object):
     '''
     A class designed to follow a line in the workspace
     '''
-    
-    KP = 0.8                # Line following proportional gain
-    MOVE_SPEED = 0.07       # Velocity used when following the line
-    K0 = 0                  # Gain for the secondary objective function
+    # BAD STUFF BAD STUFF BAD STUFF BAD STUFF BAD STUFF BAD STUFF BAD STUFF
+    # *********************************************************************
+    # Loop is set to just go for 3 seconds instead of using criteria
+    # Move_speed is set to 0
+    # KP is set to 0
+    # *********************************************************************
+    # BAD STUFF BAD STUFF BAD STUFF BAD STUFF BAD STUFF BAD STUFF BAD STUFF
+
+    # KP = 0.8                # Line following proportional gain
+    KP = 0
+    MOVE_SPEED = 0          
+    #    MOVE_SPEED = 0.07       # Velocity used when following the line
+    K0 = -10                  # Gain for the secondary objective function
     DELTA = 0.01            # Step size for partial derivative calculation
 
     # Used for debugging - quickly save/load goals and a plane
-    SAVE_PLANE = True
+    SAVE_PLANE = False
     LOAD_PLANE = not SAVE_PLANE
     SAVE_GOAL = True
     LOAD_GOAL = not SAVE_GOAL
@@ -109,6 +118,7 @@ class LineFollower(object):
         '''
         rate = rospy.Rate(self.pub_rate)
         t0 = rospy.Time.now()
+        t = 0
         p1 = p1.squeeze()
         p2 = p2.squeeze()
         p12 = p2 - p1 # relative position of p1 wrt p2
@@ -116,7 +126,8 @@ class LineFollower(object):
         max_dist_actual = self.dist_from_point(p2)
         v12 = p12/np.linalg.norm(p12)*v0
         rospy.loginfo("Moving. Press Ctrl-C to stop...")
-        while (self.dist_from_point(p1) < max_dist_actual) and not rospy.is_shutdown():
+        # while (self.dist_from_point(p1) < max_dist_actual) and not rospy.is_shutdown():
+        while (t < 3):
             self.rate_publisher.publish(self.pub_rate)
             t = (rospy.Time.now() - t0).to_sec()
             p_estimate = p1 + t*v12
@@ -157,8 +168,21 @@ class LineFollower(object):
         w = 0
         for joint in hf.frame_dict:
             q_bar = (lower_limits[joint] + upper_limits[joint])/2
-            w = w - 1.0/(2.0*n)*((joint_angles[joint] - q_bar)/(upper_limits[joint] - lower_limits[joint]))**2
+            #NOTE: Changed from w - ... to w + ... : might be wrong
+            w = w + ((joint_angles[joint] - q_bar)/(upper_limits[joint] - lower_limits[joint]))**2
         return w
+
+    def get_z_joint_limits(self, joint_angles, lower_limits, upper_limits):
+        '''
+        upper_limits and lower_limits are dicts, so is joint_angles
+        '''
+        n = len(hf.frame_dict)
+        z = []
+        for joint in hf.frame_dict:
+            q_bar = (lower_limits[joint] + upper_limits[joint])/2
+            #NOTE: Changed from w - ... to w + ... : might be wrong
+            z.append((joint_angles[joint] - q_bar)/(upper_limits[joint] - lower_limits[joint])**2)
+        return np.matrix(z).T
 
     def get_partial_w_q_joint_limits(self, joint_angles, delta):
         '''
@@ -173,7 +197,7 @@ class LineFollower(object):
             delta_angles[joint] = delta_angles[joint] + delta
             fq = self.get_w_joint_limits(joint_angles, self.lower_limits, self.upper_limits)
             fqdelta = self.get_w_joint_limits(delta_angles, self.lower_limits, self.upper_limits)
-            partial.append( (fqdelta - fq) / delta)
+            partial.append( (fqdelta - fq) / delta) 
         return np.matrix(partial).T # np array in framedict order
 
     def get_b(self, k, delta):
@@ -181,8 +205,10 @@ class LineFollower(object):
         Secondary objective function, designed to avoid joint limits
         '''
         joint_angles = self._left_arm.joint_angles()
-        
-        return k * self.get_partial_w_q_joint_limits(joint_angles,delta)
+        # This is other stuff (thanks Google!)
+        return k * self.get_z_joint_limits(joint_angles, self.lower_limits, self.upper_limits)
+        # This is from class
+        # return k * self.get_partial_w_q_joint_limits(joint_angles,delta)
      
     def follow_spline(self, tck, u, u_step=0.1):
         '''
